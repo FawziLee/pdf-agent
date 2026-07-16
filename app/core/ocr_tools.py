@@ -35,6 +35,7 @@ CN_MINOR_RE = re.compile(r"^[（(][一二三四五六七八九十百千]+[）)]"
     针对不同文档需要针对处理
 """
 
+
 class PaddleOcrTool:
     """
     百度 AI Studio PaddleOCR 远程服务,单次调用最好不要超过100页，避免出现超时的情况

@@ -15,7 +15,8 @@ class DocumentInfoResponse(BaseModel):
     file_size: int
     chunk_count: int
     status: int
-    failed_reason: str
+    summary: str | None = None
+    failed_reason: str | None = None
     created_by: int
     created_at: datetime
     updated_at: datetime

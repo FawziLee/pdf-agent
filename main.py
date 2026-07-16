@@ -5,18 +5,16 @@ from fastapi.middleware.cors import CORSMiddleware
 import uvicorn
 
 from app.db.session import init_db
+from app.db.milvus import init_milvus
 from app.api.v1.document import document_router
-from app.utils.exception import (
-    BusinessException,
-    business_exception_handler,
-    unhandled_exception_handler,
-)
+
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # 启动时创建 SQLite 表
+    # 启动时初始化 SQLite / Milvus（各创建一次）
     init_db()
+    init_milvus()
     yield
 
 
@@ -26,9 +24,6 @@ app = FastAPI(
     version="0.1.0",
     lifespan=lifespan,
 )
-
-app.add_exception_handler(BusinessException, business_exception_handler)
-app.add_exception_handler(Exception, unhandled_exception_handler)
 
 app.add_middleware(
     CORSMiddleware,

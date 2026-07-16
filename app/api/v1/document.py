@@ -1,4 +1,5 @@
 from typing import Annotated
+import json
 
 from fastapi import APIRouter, UploadFile, File, Query, Depends
 from sqlalchemy.orm import Session
@@ -6,9 +7,20 @@ from sqlalchemy.orm import Session
 from app.schemas.common import ResponseModel, PageQuery
 from app.service.document_service import document_process_service
 from app.db.session import get_db
+from app.agent import PdfAgent
 
 document_router = APIRouter(prefix="/documents", tags=["documents"])
 DBSession = Annotated[Session, Depends(get_db)]
+pdf_agent = PdfAgent()
+
+
+def _parse_section_summaries(raw: str | None) -> list:
+    if not raw:
+        return []
+    try:
+        return json.loads(raw)
+    except json.JSONDecodeError:
+        return []
 
 
 @document_router.post("/upload", summary="上传文档")
@@ -24,6 +36,12 @@ async def upload_document(
         user_id=user_id,
         db=db,
     )
+    ocr_result = await pdf_agent.load_pdf(document.file_path, document.document_id, document.file_name)
+    summary_result = await pdf_agent.generate_summary(ocr_result)
+    document.summary = summary_result.overall
+    document.section_summaries = summary_result.sections_to_json()
+    db.commit()
+    db.refresh(document)
 
     return ResponseModel.success(
         data={
@@ -31,6 +49,8 @@ async def upload_document(
             "file_name": document.file_name,
             "status": document.status,
             "file_path": document.file_path,
+            "summary": document.summary,
+            "section_summaries": _parse_section_summaries(document.section_summaries),
         },
         message="文档上传成功（元数据已写入 SQLite）",
     )
@@ -67,6 +87,8 @@ async def get_document_detail(
             "file_ext": document.file_ext,
             "file_size": document.file_size,
             "status": document.status,
+            "summary": document.summary,
+            "section_summaries": _parse_section_summaries(document.section_summaries),
             "created_by": document.created_by,
             "tenant_id": document.tenant_id,
         }
