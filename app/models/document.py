@@ -8,9 +8,7 @@ from app.db.session import Base
 
 class Document(Base):
     """文档元数据表（SQLite）"""
-
     __tablename__ = "documents"
-
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     document_id: Mapped[str] = mapped_column(String(64), unique=True, index=True)
     file_name: Mapped[str] = mapped_column(String(255))

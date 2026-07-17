@@ -6,8 +6,7 @@ import uvicorn
 
 from app.db.session import init_db
 from app.db.milvus import init_milvus
-from app.api.v1.document import document_router
-
+from app.api.v1.router import api_v1_router
 
 
 @asynccontextmanager
@@ -35,8 +34,9 @@ app.add_middleware(
     max_age=86400,
 )
 
-app.include_router(document_router, prefix="/api/v1")
-
+# app.include_router(document_router, prefix="/api/v1")
+# app.include_router(agent_router, prefix="/api/v1")
+app.include_router(api_v1_router, prefix="/api/v1")
 
 @app.get("/health")
 async def health_check():

@@ -17,15 +17,23 @@ class DocumentProcessService:
     def __init__(self):
         self.upload_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "../../data/upload")
 
-    async def save_upload_file(self, file: UploadFile, user_id: str, db: session) -> Document:
+    async def save_upload_file(
+        self,
+        file: UploadFile,
+        user_id: str,
+        db: Session,
+        tenant_id: str = "demo-tenant",
+    ) -> Document:
         """保存上传的文件，创建文档元数据"""
+        os.makedirs(self.upload_dir, exist_ok=True)
         # 1. 校验文件格式
         file_ext = os.path.splitext(file.filename)[1].lower().replace(".", "")
         if file_ext not in ALLOW_FILE_EXTENSIONS:
             raise HTTPException(
                 status_code=400,
                 detail=f"不支持的文件格式，支持的格式：{','.join(ALLOW_FILE_EXTENSIONS)}"
-            )        # 2. 校验文件大小
+            )
+        # 2. 校验文件大小
         file_content = await file.read()
         file_size = len(file_content)
         if file_size > MAX_UPLOAD_FILE_SIZE:
@@ -51,6 +59,7 @@ class DocumentProcessService:
             file_ext=file_ext,
             file_size=file_size,
             file_path=save_path,
+            tenant_id=tenant_id,
             created_by=user_id,
             status=0  # 处理中
         )
@@ -78,7 +87,21 @@ class DocumentProcessService:
             "page": page,
             "page_size": page_size,
             "total_page": total_page,
-            "list": list
+            "list": [
+                {
+                    "document_id": d.document_id,
+                    "file_name": d.file_name,
+                    "file_ext": d.file_ext,
+                    "file_size": d.file_size,
+                    "status": d.status,
+                    "chunk_count": d.chunk_count,
+                    "summary": d.summary,
+                    "created_by": d.created_by,
+                    "tenant_id": d.tenant_id,
+                    "created_at": d.created_at.isoformat() if d.created_at else None,
+                }
+                for d in list
+            ],
         }
 
     def get_document_by_id(self, document_id: str, tenant_id: int, db: Session) -> Document:

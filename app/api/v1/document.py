@@ -7,11 +7,10 @@ from sqlalchemy.orm import Session
 from app.schemas.common import ResponseModel, PageQuery
 from app.service.document_service import document_process_service
 from app.db.session import get_db
-from app.agent import PdfAgent
+from app.agent import PdfAgent, get_pdf_agent
 
-document_router = APIRouter(prefix="/documents", tags=["documents"])
+document_router = APIRouter(prefix="/documents")
 DBSession = Annotated[Session, Depends(get_db)]
-pdf_agent = PdfAgent()
 
 
 def _parse_section_summaries(raw: str | None) -> list:
@@ -29,6 +28,7 @@ async def upload_document(
     file: UploadFile = File(..., description="上传的文档文件"),
     user_id: str = Query("demo-user", description="上传用户ID"),
     tenant_id: str = Query("demo-tenant", description="上传租户ID"),
+    pdf_agent: Annotated[PdfAgent, Depends(get_pdf_agent)] = None,
 ):
     document = await document_process_service.save_upload_file(
         file=file,
@@ -40,6 +40,18 @@ async def upload_document(
     summary_result = await pdf_agent.generate_summary(ocr_result)
     document.summary = summary_result.overall
     document.section_summaries = summary_result.sections_to_json()
+
+    # 智能体：文本块向量化并写入 Milvus
+    chunk_count = await pdf_agent.index_document(
+        ocr_parse_result=ocr_result,
+        document_id=document.document_id,
+        tenant_id=tenant_id,
+        replace_existing=True,
+        skip_titles={"参考文献"},
+    )
+    document.chunk_count = chunk_count
+    document.status = 1  # 处理完成
+
     db.commit()
     db.refresh(document)
 
@@ -51,8 +63,9 @@ async def upload_document(
             "file_path": document.file_path,
             "summary": document.summary,
             "section_summaries": _parse_section_summaries(document.section_summaries),
+            "chunk_count": document.chunk_count,
         },
-        message="文档上传成功（元数据已写入 SQLite）",
+        message="文档上传成功（摘要已写入 SQLite，向量已入库）",
     )
 
 

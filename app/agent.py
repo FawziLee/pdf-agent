@@ -1,8 +1,9 @@
 import sys
 from pathlib import Path
-from typing import List, Dict, Any
+from typing import List, Dict, Any, AsyncGenerator
 from abc import ABC
 from dataclasses import dataclass, field
+from functools import lru_cache
 
 # 支持直接运行：python app/agent.py
 _PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -228,8 +229,160 @@ class PdfAgent(Agent):
         return DocumentSummary(sections=section_summaries, overall=overall)
 
 
-    
+    def _dedupe_hits(self, hits: list[dict[str, Any]], limit: int | None = None) -> list[dict[str, Any]]:
+        seen: set[str] = set()
+        merged: list[dict[str, Any]] = []
+        for hit in hits:
+            key = (
+                f"{hit.get('document_id')}|{hit.get('page_idx')}|"
+                f"{(hit.get('text') or '')[:80]}"
+            )
+            if key in seen:
+                continue
+            seen.add(key)
+            merged.append(hit)
+            if limit is not None and len(merged) >= limit:
+                break
+        return merged
 
+    async def retrieve(
+        self,
+        question: str,
+        tenant_id: str = "default",
+        document_ids: list[str] | None = None,
+        top_k: int = 5,
+        use_bm25: bool = True,
+    ) -> dict[str, Any]:
+        """检索相关文本块：分别返回稠密向量与 BM25 结果，并给出合并去重后的 contexts。"""
+        query = (question or "").strip()
+        if not query:
+            return {"dense": [], "bm25": [], "contexts": []}
+
+        query_vec = await self.embedding_engine.async_single_embed(query)
+        dense_hits = self.vector_db.search(
+            query_vector=query_vec,
+            top_k=top_k,
+            tenant_id=tenant_id,
+            document_ids=document_ids,
+        )
+
+        dense = self._dedupe_hits(dense_hits, limit=top_k)
+        bm25: list[dict[str, Any]] = []
+        if use_bm25:
+            bm25_hits = self.vector_db.bm25_search(
+                query_text=query,
+                top_k=top_k,
+                tenant_id=tenant_id,
+                document_ids=document_ids,
+            )
+            bm25 = self._dedupe_hits(bm25_hits, limit=top_k)
+
+        contexts = self._dedupe_hits(dense + bm25)
+        return {"dense": dense, "bm25": bm25, "contexts": contexts}
+
+    async def ask(
+        self,
+        question: str,
+        tenant_id: str = "default",
+        document_ids: list[str] | None = None,
+        top_k: int = 5,
+        use_bm25: bool = True,
+    ) -> dict[str, Any]:
+        """RAG 问答：先检索上下文，再让 LLM 基于原文回答。"""
+        retrieval = await self.retrieve(
+            question=question,
+            tenant_id=tenant_id,
+            document_ids=document_ids,
+            top_k=top_k,
+            use_bm25=use_bm25,
+        )
+        contexts = retrieval["contexts"]
+        if not contexts:
+            return {
+                "answer": "未检索到相关文档内容，请先上传并入库 PDF。",
+                "contexts": [],
+            }
+
+        context_text = "\n\n".join(
+            f"[来源 document_id={c.get('document_id')} page={c.get('page_idx')}]\n{c.get('text') or ''}"
+            for c in contexts
+        )
+        resp = await self.llm_engine.async_chat(
+            messages=[
+                {
+                    "role": "system",
+                    "content": (
+                        "你是文档问答助手。只根据给定上下文回答，不要编造。"
+                        "若上下文不足，明确说明无法从文档中得出结论。"
+                        "回答简洁，可引用页码。"
+                    ),
+                },
+                {
+                    "role": "user",
+                    "content": f"问题：{question}\n\n上下文：\n{context_text}",
+                },
+            ]
+        )
+        return {
+            "answer": resp.get("content", ""),
+            "dense": retrieval["dense"],
+            "bm25": retrieval["bm25"],
+            "contexts": contexts,
+        }
+
+    async def stream_ask(
+        self,
+        question: str,
+        tenant_id: str = "default",
+        document_ids: list[str] | None = None,
+        top_k: int = 5,
+        use_bm25: bool = True,
+    ) -> AsyncGenerator[dict[str, Any], None]:
+        """流式 RAG 问答：先返回检索块，再流式返回回答。"""
+        retrieval = await self.retrieve(
+            question=question,
+            tenant_id=tenant_id,
+            document_ids=document_ids,
+            top_k=top_k,
+            use_bm25=use_bm25,
+        )
+        contexts = retrieval["contexts"]
+        yield {"event": "contexts", "data": retrieval}
+
+        if not contexts:
+            message = "未检索到相关文档内容，请先上传并入库 PDF。"
+            yield {"event": "delta", "data": {"content": message}}
+            yield {"event": "done", "data": {"finish_reason": "no_context"}}
+            return
+
+        context_text = "\n\n".join(
+            f"[来源 document_id={c.get('document_id')} page={c.get('page_idx')}]\n"
+            f"{c.get('text') or ''}"
+            for c in contexts
+        )
+        messages = [
+            {
+                "role": "system",
+                "content": (
+                    "你是文档问答助手。只根据给定上下文回答，不要编造。"
+                    "若上下文不足，明确说明无法从文档中得出结论。"
+                    "回答简洁，可引用页码。"
+                ),
+            },
+            {
+                "role": "user",
+                "content": f"问题：{question}\n\n上下文：\n{context_text}",
+            },
+        ]
+
+        async for chunk in self.llm_engine.async_stream_chat(messages=messages):
+            yield {"event": "delta", "data": {"content": chunk}}
+        yield {"event": "done", "data": {"finish_reason": "stop"}}
+
+
+@lru_cache(maxsize=1)
+def get_pdf_agent() -> PdfAgent:
+    return PdfAgent()
 
 if __name__ == "__main__":
     import asyncio

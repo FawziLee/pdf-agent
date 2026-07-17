@@ -1,4 +1,3 @@
-# app/core/tools/pdf/ocr/remote_ocr.py
 import asyncio
 import aiohttp
 import json

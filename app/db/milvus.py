@@ -28,16 +28,11 @@ def get_milvus_client() -> MilvusClient:
 
 
 def ensure_collection(client: MilvusClient | None = None) -> None:
-    """若 collection 不存在则创建（含稠密向量 + BM25 稀疏字段）；已存在则跳过。
-
-    注意：
-    - 改 schema 不会自动迁移，需删旧 collection / 换库文件后重建。
-    - BM25 全文检索在 Milvus Standalone/Distributed 上完整支持；
-      Lite 可能不支持，届时把 MILVUS_URI 换成 http://localhost:19530。
-    """
+    """若 collection 不存在则创建（含稠密向量 + BM25 稀疏字段）；已存在则跳过，并确保已 load。"""
     client = client or get_milvus_client()
     if client.has_collection(COLLECTION_NAME):
         logger.info(f"Milvus collection 已存在，跳过创建：{COLLECTION_NAME}")
+        client.load_collection(COLLECTION_NAME)
         return
 
     schema = MilvusClient.create_schema(auto_id=True, enable_dynamic_field=False)
@@ -88,6 +83,7 @@ def ensure_collection(client: MilvusClient | None = None) -> None:
         schema=schema,
         index_params=index_params,
     )
+    client.load_collection(COLLECTION_NAME)
     logger.info(
         f"已创建 collection：{COLLECTION_NAME}, "
         f"dense_dim={EMBEDDING_DIM}, sparse=BM25"
