@@ -256,7 +256,13 @@ class PdfAgent(Agent):
         """检索相关文本块：分别返回稠密向量与 BM25 结果，并给出合并去重后的 contexts。"""
         query = (question or "").strip()
         if not query:
-            return {"dense": [], "bm25": [], "contexts": []}
+            return {
+                "dense": [],
+                "bm25": [],
+                "contexts": [],
+                "bm25_error": None,
+                "bm25_enabled": use_bm25,
+            }
 
         query_vec = await self.embedding_engine.async_single_embed(query)
         dense_hits = self.vector_db.search(
@@ -265,20 +271,31 @@ class PdfAgent(Agent):
             tenant_id=tenant_id,
             document_ids=document_ids,
         )
-
         dense = self._dedupe_hits(dense_hits, limit=top_k)
+
         bm25: list[dict[str, Any]] = []
+        bm25_error: str | None = None
         if use_bm25:
-            bm25_hits = self.vector_db.bm25_search(
-                query_text=query,
-                top_k=top_k,
-                tenant_id=tenant_id,
-                document_ids=document_ids,
-            )
-            bm25 = self._dedupe_hits(bm25_hits, limit=top_k)
+            try:
+                bm25_hits = self.vector_db.bm25_search(
+                    query_text=query,
+                    top_k=top_k,
+                    tenant_id=tenant_id,
+                    document_ids=document_ids,
+                )
+                bm25 = self._dedupe_hits(bm25_hits, limit=top_k)
+            except Exception as exc:
+                bm25_error = f"{type(exc).__name__}: {exc}"
+                logger.warning(f"BM25 检索失败：{bm25_error}")
 
         contexts = self._dedupe_hits(dense + bm25)
-        return {"dense": dense, "bm25": bm25, "contexts": contexts}
+        return {
+            "dense": dense,
+            "bm25": bm25,
+            "contexts": contexts,
+            "bm25_error": bm25_error,
+            "bm25_enabled": use_bm25,
+        }
 
     async def ask(
         self,
@@ -300,7 +317,11 @@ class PdfAgent(Agent):
         if not contexts:
             return {
                 "answer": "未检索到相关文档内容，请先上传并入库 PDF。",
+                "dense": retrieval["dense"],
+                "bm25": retrieval["bm25"],
                 "contexts": [],
+                "bm25_error": retrieval.get("bm25_error"),
+                "bm25_enabled": retrieval.get("bm25_enabled", use_bm25),
             }
 
         context_text = "\n\n".join(
@@ -328,6 +349,8 @@ class PdfAgent(Agent):
             "dense": retrieval["dense"],
             "bm25": retrieval["bm25"],
             "contexts": contexts,
+            "bm25_error": retrieval.get("bm25_error"),
+            "bm25_enabled": retrieval.get("bm25_enabled", use_bm25),
         }
 
     async def stream_ask(

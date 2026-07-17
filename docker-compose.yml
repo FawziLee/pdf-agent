@@ -1,0 +1,36 @@
+services:
+  api:
+    build: .
+    container_name: pdf-agent-api
+    ports:
+      - "5557:5557"
+    environment:
+      QWEN_API_KEY: ${QWEN_API_KEY:-}
+      DASHSCOPE_API_KEY: ${DASHSCOPE_API_KEY:-}
+      PADDLE_TOKEN: ${PADDLE_TOKEN:-}
+      LLM_MODEL_NAME: ${LLM_MODEL_NAME:-qwen-plus}
+      LLM_BASE_URL: ${LLM_BASE_URL:-https://dashscope.aliyuncs.com/compatible-mode/v1}
+      EMBEDDING_MODEL_NAME: ${EMBEDDING_MODEL_NAME:-qwen3.7-text-embedding}
+      EMBEDDING_DIM: ${EMBEDDING_DIM:-1024}
+      MILVUS_URI: /app/data/milvus.db
+    volumes:
+      - ./data:/app/data
+      - ./result:/app/result
+    command: >
+      uv run uvicorn main:app
+      --host 0.0.0.0
+      --port 5557
+    restart: unless-stopped
+
+  ui:
+    build: .
+    container_name: pdf-agent-ui
+    ports:
+      - "7860:7860"
+    environment:
+      API_BASE_URL: http://api:5557
+      GRADIO_SERVER_PORT: 7860
+    depends_on:
+      - api
+    command: uv run python ui/gradio_app.py
+    restart: unless-stopped

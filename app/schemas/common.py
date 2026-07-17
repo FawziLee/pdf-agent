@@ -4,6 +4,7 @@ from pydantic import BaseModel, Field
 # 泛型类型，支持任意数据类型
 T = TypeVar("T")
 
+
 class ResponseModel(BaseModel, Generic[T]):
     """统一响应模型"""
     code: int = Field(200, description="状态码，200为成功，非200为失败")
