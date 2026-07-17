@@ -22,7 +22,9 @@ SCHEMA_MARKER = DATA_DIR / ".milvus_schema_v2_jieba"
 def get_milvus_client() -> MilvusClient:
     """全局只创建一次 MilvusClient。"""
     DATA_DIR.mkdir(parents=True, exist_ok=True)
-    uri = os.getenv("MILVUS_URI", DEFAULT_URI)
+    # 避免使用 pymilvus 自身保留的 MILVUS_URI 环境变量。
+    # pymilvus 在 import 阶段会把它按远程 http(s) URI 解析，本地文件路径会报 Illegal uri。
+    uri = os.getenv("PDF_AGENT_MILVUS_URI", DEFAULT_URI)
     token = os.getenv("MILVUS_TOKEN")  # 远程如 root:Milvus；Lite 可不设
     kwargs = {"uri": uri}
     if token:
